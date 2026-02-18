@@ -1,16 +1,27 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
+import KrsModal from "./Components/KrsModal";
 
 type EnrollmentRow = {
   id: number;
+  student_id: number;
+  course_id: number;
   student_nim: string;
+  student_email: string;
   student_name: string;
   course_code: string;
   course_name: string;
+  course_credits: number;
   semester: number;
   academic_year: string;
   status: "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED";
 };
+
+type ToastType = "success" | "error";
+
+function makeId() {
+  return Math.random().toString(36).slice(2);
+}
 
 type ApiResponse = {
   data: EnrollmentRow[];
@@ -35,6 +46,17 @@ type SortRule = {
   dir: "asc" | "desc";
 };
 
+const sortFieldOptions: { value: SortRule["field"]; label: string }[] = [
+  { value: "academic_year", label: "academic_year" },
+  { value: "semester", label: "semester" },
+  { value: "student_nim", label: "student_nim" },
+  { value: "student_name", label: "student_name" },
+  { value: "course_code", label: "course_code" },
+  { value: "course_name", label: "course_name" },
+  { value: "status", label: "status" },
+  { value: "id", label: "id" },
+];
+
 function Badge({ status }: { status: EnrollmentRow["status"] }) {
   const cls =
     status === "APPROVED"
@@ -49,11 +71,46 @@ function Badge({ status }: { status: EnrollmentRow["status"] }) {
 }
 
 export default function App() {
+  async function onDelete(id: number) {
+    const ok = confirm("Yakin mau delete data ini?");
+    if (!ok) return;
+
+    try {
+      const res = await fetch(`/api/enrollments/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      setPage(1); // sekarang aman karena scope-nya sama
+    } catch (e) {
+      console.error(e);
+      alert("Delete gagal. Cek console / backend route.");
+    }
+  }
+
+  const [toast, setToast] = useState<null | {
+    id: string;
+    type: ToastType;
+    message: string;
+  }>(null);
+
+  function showToast(type: ToastType, message: string) {
+    const id = makeId();
+    setToast({ id, type, message });
+    window.setTimeout(() => {
+      setToast((t) => (t?.id === id ? null : t));
+    }, 3000);
+  }
   const [rows, setRows] = useState<EnrollmentRow[]>([]);
   const [meta, setMeta] = useState<ApiResponse["meta"] | null>(null);
 
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingRow, setEditingRow] = useState<EnrollmentRow | undefined>(
+    undefined,
+  );
+
+  const [showCreate, setShowCreate] = useState(false);
+
   const [page, setPage] = useState(1);
-  const pageSize = 10;
+  const [pageSize, setPageSize] = useState(10);
 
   const [sortBy, setSortBy] = useState<
     | "id"
@@ -70,7 +127,6 @@ export default function App() {
   // Advanced Order (multi-column)
   const [sortRules, setSortRules] = useState<SortRule[] | null>(null);
   const [showAdvancedSort, setShowAdvancedSort] = useState(false);
-  const sortsKey = JSON.stringify(sortRules ?? []);
 
   // Quick filter (min 2)
   const [statusFilter, setStatusFilter] = useState<
@@ -83,33 +139,25 @@ export default function App() {
     "ALL",
   );
 
-  // Live search (debounce 300–500ms)
+  // live search
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
 
-  // Advanced filter UI
+  // advanced filter
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [filterLogic, setFilterLogic] = useState<"AND" | "OR">("AND");
-
-  // Advanced: student_nim op
   const [afNimOp, setAfNimOp] = useState<"contains" | "startsWith" | "equals">(
     "contains",
   );
   const [afNim, setAfNim] = useState("");
-
-  // Advanced: academic_year equals/between
   const [afYearMode, setAfYearMode] = useState<"equals" | "between">("equals");
   const [afYear, setAfYear] = useState("");
   const [afYearFrom, setAfYearFrom] = useState("");
   const [afYearTo, setAfYearTo] = useState("");
-
-  // Advanced: semester in
   const [afSemester, setAfSemester] = useState<{ 1: boolean; 2: boolean }>({
     1: false,
     2: false,
   });
-
-  // Advanced: status in
   const [afStatus, setAfStatus] = useState<{
     DRAFT: boolean;
     SUBMITTED: boolean;
@@ -119,8 +167,7 @@ export default function App() {
 
   function onSort(col: typeof sortBy) {
     setPage(1);
-    // kalau user header-sort, matikan advanced order supaya ga konflik
-    setSortRules(null);
+    setSortRules(null); //matikan advanced ordrr
 
     if (sortBy === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else {
@@ -147,7 +194,11 @@ export default function App() {
     }
 
     if (afYearMode === "equals" && afYear.trim()) {
-      rules.push({ field: "academic_year", op: "equals", value: afYear.trim() });
+      rules.push({
+        field: "academic_year",
+        op: "equals",
+        value: afYear.trim(),
+      });
     }
     if (afYearMode === "between" && afYearFrom.trim() && afYearTo.trim()) {
       rules.push({
@@ -171,18 +222,53 @@ export default function App() {
     return rules;
   }
 
-  // ✅ stable key for dependency
-  const advancedKey = JSON.stringify({
-    afNimOp,
-    afNim,
-    afYearMode,
-    afYear,
-    afYearFrom,
-    afYearTo,
-    afSemester,
-    afStatus,
-    filterLogic,
-  });
+  const advancedRules = useMemo(
+    () => buildAdvancedFilters(),
+    [
+      afNimOp,
+      afNim,
+      afYearMode,
+      afYear,
+      afYearFrom,
+      afYearTo,
+      afSemester,
+      afStatus,
+      filterLogic,
+    ],
+  );
+
+  function buildQueryParams(opts: { includePagination: boolean }) {
+    const qs = new URLSearchParams({
+      status: statusFilter,
+      semester: semesterFilter,
+      academic_year: academicYearFilter,
+      search,
+      filter_logic: filterLogic,
+    });
+
+    if (opts.includePagination) {
+      qs.set("page", String(page));
+      qs.set("page_size", String(pageSize));
+    }
+
+    if (sortRules && sortRules.length > 0) {
+      qs.set("sorts", JSON.stringify(sortRules));
+    } else {
+      qs.set("sort_by", sortBy);
+      qs.set("sort_dir", sortDir);
+    }
+
+    if (advancedRules.length > 0) {
+      qs.set("filters", JSON.stringify(advancedRules));
+    }
+
+    return qs;
+  }
+
+  function onExport() {
+    const qs = buildQueryParams({ includePagination: false });
+    window.open(`/api/enrollments/export?${qs.toString()}`, "_blank");
+  }
 
   // debounce search
   useEffect(() => {
@@ -198,29 +284,7 @@ export default function App() {
     const controller = new AbortController();
 
     async function load() {
-      const advancedRules = buildAdvancedFilters();
-
-      const qs = new URLSearchParams({
-        page: String(page),
-        page_size: String(pageSize),
-        status: statusFilter,
-        semester: semesterFilter,
-        academic_year: academicYearFilter,
-        search: search,
-        filter_logic: filterLogic,
-      });
-
-      // Advanced order priority
-      if (sortRules && sortRules.length > 0) {
-        qs.set("sorts", JSON.stringify(sortRules));
-      } else {
-        qs.set("sort_by", sortBy);
-        qs.set("sort_dir", sortDir);
-      }
-
-      if (advancedRules.length > 0) {
-        qs.set("filters", JSON.stringify(advancedRules));
-      }
+      const qs = buildQueryParams({ includePagination: true });
 
       const res = await fetch(`/api/enrollments?${qs.toString()}`, {
         signal: controller.signal,
@@ -239,31 +303,76 @@ export default function App() {
     return () => controller.abort();
   }, [
     page,
-    sortBy,
-    sortDir,
+    pageSize,
     statusFilter,
     semesterFilter,
     academicYearFilter,
     search,
-    advancedKey,
-    sortsKey,
     filterLogic,
+    sortBy,
+    sortDir,
+    sortRules,
+    advancedRules,
   ]);
-
-  // helper untuk UI advanced order
-  const sortFieldOptions: { value: SortRule["field"]; label: string }[] = [
-    { value: "academic_year", label: "academic_year" },
-    { value: "semester", label: "semester" },
-    { value: "student_nim", label: "student_nim" },
-    { value: "student_name", label: "student_name" },
-    { value: "course_code", label: "course_code" },
-    { value: "course_name", label: "course_name" },
-    { value: "status", label: "status" },
-    { value: "id", label: "id" },
-  ];
 
   return (
     <div className="page">
+      {toast && (
+        <div
+          className={`toast toast--${toast.type}`}
+          role="status"
+          aria-live="polite"
+        >
+          {toast.message}
+        </div>
+      )}
+
+      {}
+      {showCreate && (
+        <KrsModal
+          mode="create"
+          onClose={() => setShowCreate(false)}
+          onSuccess={() => {
+            setShowCreate(false);
+            setPage(1);
+            showToast("success", "Berhasil membuat KRS!");
+          }}
+        />
+      )}
+
+      {editingId !== null && (
+        <KrsModal
+          mode="update"
+          enrollmentId={editingId}
+          initial={
+            editingRow && {
+              id: editingRow.id,
+              student_id: editingRow.student_id,
+              course_id: editingRow.course_id,
+              semester: editingRow.semester as 1 | 2,
+              academic_year: editingRow.academic_year,
+              status: editingRow.status,
+              student_nim: editingRow.student_nim,
+              student_name: editingRow.student_name,
+              student_email: editingRow.student_email,
+              course_code: editingRow.course_code,
+              course_name: editingRow.course_name,
+              course_credits: editingRow.course_credits,
+            }
+          }
+          onClose={() => {
+            setEditingId(null);
+            setEditingRow(undefined);
+          }}
+          onSuccess={() => {
+            setEditingId(null);
+            setEditingRow(undefined);
+            setPage(1);
+            showToast("success", "Berhasil update KRS!");
+          }}
+        />
+      )}
+
       <header className="navbar">
         <div className="navbar__inner">
           <div className="brand">
@@ -299,21 +408,30 @@ export default function App() {
 
           <div className="card__body">
             <div className="controls">
-              {/* ROW 1 */}
+              {/* row1 */}
               <div className="controls__row1">
                 <button
                   className="btn btn--primary"
-                  onClick={() =>
-                    alert("Next: kita bikin modal Create KRS (atomic 3 tabel)")
-                  }
+                  onClick={() => setShowCreate(true)}
                 >
                   + Tambah KRS
                 </button>
 
                 <div className="control">
                   <span>Show</span>
-                  <select value={pageSize} disabled className="select">
-                    <option>10</option>
+                  <select
+                    value={pageSize}
+                    className="select"
+                    onChange={(e) => {
+                      setPage(1);
+                      setPageSize(Number(e.target.value));
+                    }}
+                  >
+                    {[10, 25, 50, 100].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
                   </select>
                   <span>entries</span>
                 </div>
@@ -329,7 +447,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* ROW 2 */}
+              {/* row2 */}
               <div className="controls__row2">
                 <div className="control">
                   <span>Status</span>
@@ -382,7 +500,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* ROW 3 */}
+              {/* row3 */}
               <div className="controls__row3">
                 <button
                   className="btn btn--ghost"
@@ -397,9 +515,13 @@ export default function App() {
                 >
                   Advanced Order
                 </button>
+
+                <button className="btn btn--primary" onClick={onExport}>
+                  Export CSV
+                </button>
               </div>
 
-              {/* Advanced Filter */}
+              {/* adavnced filter */}
               {showAdvanced && (
                 <div className="adv">
                   <div className="adv__group1">
@@ -586,7 +708,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* ✅ Advanced Order UI */}
+              {/* advancde order */}
               {showAdvancedSort && (
                 <div className="adv">
                   <div className="adv__group1">
@@ -594,7 +716,9 @@ export default function App() {
                       <label className="adv__label">
                         Advanced Order (multi-column)
                       </label>
-                      <div style={{ color: "#6b7280", fontSize: 12, marginTop: 4 }}>
+                      <div
+                        style={{ color: "#6b7280", fontSize: 12, marginTop: 4 }}
+                      >
                         Urutan dieksekusi dari atas ke bawah.
                       </div>
                     </div>
@@ -605,7 +729,13 @@ export default function App() {
                         className="adv__item"
                         style={{ gridColumn: "1 / -1" }}
                       >
-                        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 10,
+                            alignItems: "center",
+                          }}
+                        >
                           <span style={{ width: 22, color: "#6b7280" }}>
                             {idx + 1}.
                           </span>
@@ -619,7 +749,10 @@ export default function App() {
                               setSortDir("desc");
                               setSortRules((prev) => {
                                 const next = [...(prev ?? [])];
-                                next[idx] = { ...next[idx], field: e.target.value as any };
+                                next[idx] = {
+                                  ...next[idx],
+                                  field: e.target.value as any,
+                                };
                                 return next;
                               });
                             }}
@@ -638,7 +771,10 @@ export default function App() {
                               setPage(1);
                               setSortRules((prev) => {
                                 const next = [...(prev ?? [])];
-                                next[idx] = { ...next[idx], dir: e.target.value as any };
+                                next[idx] = {
+                                  ...next[idx],
+                                  dir: e.target.value as any,
+                                };
                                 return next;
                               });
                             }}
@@ -671,7 +807,6 @@ export default function App() {
                       className="btn btn--primary"
                       onClick={() => {
                         setPage(1);
-                        // kalau kosong, set default sesuai contoh requirement
                         if (!sortRules || sortRules.length === 0) {
                           setSortRules([
                             { field: "academic_year", dir: "desc" },
@@ -704,7 +839,7 @@ export default function App() {
                       className="btn btn--ghost"
                       onClick={() => {
                         setPage(1);
-                        setSortRules(null); // balik ke header sort
+                        setSortRules(null);
                         setShowAdvancedSort(false);
                       }}
                     >
@@ -737,6 +872,8 @@ export default function App() {
                         </th>
                       );
                     })}
+
+                    <th style={{ width: 160 }}>Action</th>
                   </tr>
                 </thead>
 
@@ -752,12 +889,34 @@ export default function App() {
                       <td>
                         <Badge status={r.status} />
                       </td>
+                      <td>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button
+                            className="btn btn--ghost"
+                            type="button"
+                            onClick={() => {
+                              setEditingId(r.id);
+                              setEditingRow(r);
+                            }}
+                          >
+                            Edit
+                          </button>
+
+                          <button
+                            className="btn btn--ghost"
+                            type="button"
+                            onClick={() => onDelete(r.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
 
                   {rows.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="empty">
+                      <td colSpan={8} className="empty">
                         No data
                       </td>
                     </tr>

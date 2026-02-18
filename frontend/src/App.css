@@ -387,3 +387,27 @@
 .empty {
   padding: 16px;
 }
+
+.toast{
+  position: fixed;
+  right: 16px;
+  top: 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-weight: 600;
+  z-index: 9999;
+  box-shadow: 0 8px 30px rgba(0,0,0,.12);
+}
+
+.toast--success{
+  background: #e9f8ee;
+  color: #1b5e20;
+  border: 1px solid #bfe9c9;
+}
+
+.toast--error{
+  background: #fdecec;
+  color: #8a1f1f;
+  border: 1px solid #f7c2c2;
+}
+

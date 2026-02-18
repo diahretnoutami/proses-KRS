@@ -2,56 +2,78 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
 
 class EnrollmentSeeder extends Seeder
 {
-    /**
-     * Run the database seeds.
-     */
     public function run(): void
     {
+        DB::disableQueryLog();
+
         $now = now();
+        $target = 5_000_000;
+        $batchSize = 5_000;
 
-        $studentIds = DB::table('students')->pluck('id')->all();
-        $courseIds  = DB::table('courses')->pluck('id')->all();
+        $studentCount = (int) DB::table('students')->count(); 
+        $courseCount  = (int) DB::table('courses')->count();  
 
-        if (empty($studentIds) || empty($courseIds)) {
-            $this->command?->warn('Students/Courses empty. Run StudentSeeder & CourseSeeder first.');
+        if ($studentCount === 0 || $courseCount === 0) {
+            $this->command?->warn('Students/Courses empty. Seed them first.');
+            return;
+        }
+
+        
+        $minStudentId = (int) DB::table('students')->min('id');
+        $minCourseId  = (int) DB::table('courses')->min('id');  
+
+        $years = ['2024/2025', '2025/2026'];
+        $termCount = count($years) * 2; 
+        $capacity = $studentCount * $courseCount * $termCount; 
+        if ($capacity < $target) {
+            $this->command?->error("Kombinasi unik maksimal {$capacity}, kurang untuk {$target}.");
             return;
         }
 
         $statuses = ['DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED'];
-        $years = ['2024/2025', '2025/2026'];
 
         $rows = [];
-        $used = []; // untuk jaga unique kombinasi
+        for ($i = 0; $i < $target; $i++) {
+            $termIdx = $i % $termCount;              
+            $academicYear = $years[intdiv($termIdx, 2)];
+            $semester = ($termIdx % 2) + 1;         
+            
+            $k = intdiv($i, $termCount);
+            $courseOffset  = $k % $courseCount;     
+            $studentOffset = intdiv($k, $courseCount);
 
-        while (count($rows) < 200) {
-            $studentId = $studentIds[array_rand($studentIds)];
-            $courseId = $courseIds[array_rand($courseIds)];
-            $academicYear = $years[array_rand($years)];
-            $semester = random_int(1, 2);
-
-            $key = "{$studentId}|{$courseId}|{$academicYear}|{$semester}";
-            if (isset($used[$key])) {
-                continue;
-            }
-            $used[$key] = true;
+            $studentId = $minStudentId + $studentOffset;
+            $courseId  = $minCourseId + $courseOffset;
 
             $rows[] = [
-                'student_id' => $studentId,
-                'course_id' => $courseId,
+                'student_id'    => $studentId,
+                'course_id'     => $courseId,
                 'academic_year' => $academicYear,
-                'semester' => $semester,
-                'status' => $statuses[array_rand($statuses)],
-                'created_at' => $now,
-                'updated_at' => $now,
+                'semester'      => $semester,
+                'status'        => $statuses[array_rand($statuses)],
+                'created_at'    => $now,
+                'updated_at'    => $now,
             ];
+
+            if (count($rows) >= $batchSize) {
+                DB::table('enrollments')->insert($rows);
+                $rows = [];
+
+                if ((($i + 1) % 200_000) === 0) {
+                    $this->command?->info("Inserted " . ($i + 1) . " rows...");
+                }
+            }
         }
 
-        DB::table('enrollments')->insert($rows);
+        if (!empty($rows)) {
+            DB::table('enrollments')->insert($rows);
+        }
+
+        $this->command?->info("Done. Inserted {$target} enrollments.");
     }
 }

@@ -2,32 +2,37 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
 
 class StudentSeeder extends Seeder
 {
-    /**
-     * Run the database seeds.
-     */
     public function run(): void
     {
+        DB::disableQueryLog();
         $now = now();
 
-        $students = [];
-        for ($i = 1; $i <= 50; $i++) {
-            $nim = str_pad((string) $i, 10, '0', STR_PAD_LEFT);
+        $startNim = 215500001;
+        $totalStudents = 50000;   // aman untuk 5 juta enrollments
+        $chunk = 5000;
 
-            $students[] = [
-                'nim' => $nim,
-                'name' => "Student {$i}",
-                'email' => "student{$i}@example.com",
-                'created_at' => $now,
-                'updated_at' => $now,
-            ];
+        for ($i = 0; $i < $totalStudents; $i += $chunk) {
+            $batch = [];
+            $end = min($i + $chunk, $totalStudents);
+
+            for ($k = $i; $k < $end; $k++) {
+                $nim = (string)($startNim + $k);
+
+                $batch[] = [
+                    'nim' => $nim,
+                    'name' => "Student " . ($k + 1),
+                    'email' => "student" . ($k + 1) . "@example.com",
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+            }
+
+            DB::table('students')->insert($batch);
         }
-
-        DB::table('students')->insert($students);
     }
 }
