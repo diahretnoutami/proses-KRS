@@ -12,4 +12,10 @@ export default defineConfig({
       },
     },
   },
+
+  preview: {
+    host: true,
+    port: process.env.PORT ? Number(process.env.PORT) : 3000,
+    allowedHosts: true
+  }
 })
