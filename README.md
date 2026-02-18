@@ -375,4 +375,8 @@ Waktu proses seeding 5.000.000 dan export sangat tergantung pada:
 - Pencarian `contains` pada kolom teks besar bisa lebih lambat pada dataset besar; optimasi lanjutan dapat menggunakan trigram index (`pg_trgm`) jika diperlukan.
 
 
-##
+## Catatan
+Karena batasan resource pada Railway free tier, data produksi hanya diisi dengan data demo terbatas.
+Sistem ini dirancang dan diuji secara lokal dengan 5.000.000 record.
+
+
