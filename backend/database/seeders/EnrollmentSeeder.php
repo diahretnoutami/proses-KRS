@@ -12,7 +12,7 @@ class EnrollmentSeeder extends Seeder
         DB::disableQueryLog();
 
         $now = now();
-        $target = 5_000_000;
+        $target = (int) env('SEED_ENROLLMENTS', 5000);
         $batchSize = 5_000;
 
         $studentCount = (int) DB::table('students')->count(); 
